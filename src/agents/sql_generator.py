@@ -1,0 +1,151 @@
+"""
+agents/sql_generator.py — Agent 8: SQLGeneratorAgent
+
+Generates a single SQLite SELECT query using the structured context from
+ContextBuilderAgent. Incorporates validator feedback on retry attempts.
+"""
+
+from __future__ import annotations
+
+import logging
+import re
+
+from .base import AgentState, BaseAgent, MAX_SQL_RETRIES
+from .llm import call_llm
+
+logger = logging.getLogger("clearbank.agent.sql_generator")
+
+
+class SQLGeneratorAgent(BaseAgent):
+    """
+    LLM agent. Generates a single SQLite SELECT query using the structured
+    context from ContextBuilderAgent. On retry, incorporates validator feedback
+    to revise the previous SQL attempt.
+    """
+
+    name = "SQLGeneratorAgent"
+
+    _SYSTEM = (
+        "You are a SQL generator for a ClearBank banking database.\n\n"
+        "CRITICAL RULES (VIOLATIONS CAUSE SQL ERRORS):\n"
+        "  1. ALWAYS use EXACT column names from schema context\n"
+        "  2. ALWAYS use EXACT table names from 'Database Table Names' section (snake_case)\n"
+        "     Examples: loan_payments (NOT LoanPayments), customers (NOT Customers)\n"
+        "  3. NEVER combine columns (e.g., first_name + last_name is NOT 'full_name')\n"
+        "  4. NEVER invent columns that don't exist in schema\n"
+        "  5. If a column isn't in schema, SELECT both separate columns OR use one that exists\n"
+        "  6. Output ONLY a single SELECT statement — no INSERT/UPDATE/DELETE/DROP\n"
+        "  7. ENUM values are case-sensitive (e.g., status = 'active', kyc_status = 'verified')\n"
+        "  8. For text filters, use: LOWER(column) = LOWER('value') for case-insensitive matching\n"
+        "  9. Apply LIMIT 50 unless user requests aggregate/metric\n"
+        "  10. Do NOT wrap output in markdown or explanations\n"
+        "  11. **WHEN USING JOINS: ALWAYS qualify ALL column names with their table name**\n"
+        "       Example: SELECT customers.customer_id, customers.first_name, loans.loan_id, loans.status\n"
+        "       DO NOT use unqualified names like 'customer_id' when joining—this causes ambiguous errors\n"
+        "  12. **Date/time filters**: Use ISO format (YYYY-MM-DD) and comparison operators\n"
+        "       Example: WHERE loans.maturity_date > '2024-01-01'\n"
+        "  13. **Date arithmetic**: `date_column - date_column` returns an INTEGER (days) in PostgreSQL, NOT an interval\n"
+        "       ✅ CORRECT: SELECT CURRENT_DATE - loan_payments.due_date AS days_overdue\n"
+        "       ❌ WRONG: SELECT EXTRACT(DAY FROM CURRENT_DATE - loan_payments.due_date) — fails with\n"
+        "                 'function pg_catalog.extract(unknown, integer) does not exist'\n"
+        "       Only use EXTRACT(...) on an actual INTERVAL/TIMESTAMP, e.g. EXTRACT(DAY FROM AGE(a, b))\n\n"
+        "TABLE NAME REFERENCE:\n"
+        "  ✅ Correct (snake_case): FROM customers, FROM loan_payments, JOIN loans ON ...\n"
+        "  ❌ WRONG (CamelCase): FROM LoanPayments, FROM Customers (will cause 'relation does not exist' error)\n\n"
+        "BEFORE GENERATING SQL:\n"
+        "  1. Check the 'Database Table Names' section for the ACTUAL table names to use\n"
+        "  2. Identify all tables needed for the query\n"
+        "  3. List JOIN paths from the context\n"
+        "  4. Read schema carefully. List all columns you plan to use.\n"
+        "  5. Check that all columns exist in the schema\n"
+        "  6. If using JOINs, prefix EVERY column with its snake_case table name\n"
+        "  7. Handle NULL values if needed (WHERE column IS NOT NULL)\n\n"
+        "COMMON BANKING QUERIES (with correct table names):\n"
+        "  • Loans + Customers: JOIN on loans.customer_id = customers.customer_id\n"
+        "  • Loans + Loan Payments: JOIN on loans.loan_id = loan_payments.loan_id\n"
+        "  • Upcoming Payments: SELECT loan_payments.due_date FROM loan_payments WHERE status = 'upcoming'\n"
+        "  • Customers + Accounts: JOIN on customers.customer_id = accounts.customer_id\n"
+        "  • Filter by status: WHERE loans.status = 'active'\n"
+        "  • Filter by date: WHERE loan_payments.due_date > '2024-01-15'\n\n"
+        "COLUMN NAME MAPPINGS (Do NOT use alternative spellings):\n"
+        "  • loan_payments.due_date = when payment is DUE (NOT 'next_payment_due' or 'payment_date')\n"
+        "  • loan_payments.paid_at = TIMESTAMP when payment was RECEIVED (NULL if unpaid)\n"
+        "  • loan_payments.status = ENUM: 'upcoming', 'paid', 'overdue', 'partial', 'waived'\n"
+        "  • loans.maturity_date = final maturity of the loan (NOT 'next_payment_due')\n"
+        "  • customers.first_name + customers.last_name = customer's name (NOT 'full_name')\n\n"
+        "If validator feedback says a column is ambiguous or doesn't exist:\n"
+        "  1. Check the schema for all tables involved in JOINs\n"
+        "  2. Rewrite using fully qualified names: table_name.column_name\n"
+        "  3. Do NOT try the same unqualified column again"
+    )
+
+    def run(self, state: AgentState) -> AgentState:
+        logger.info(
+            "[%s] Generating SQL (attempt %d/%d).",
+            self.name,
+            state.sql_attempt,
+            MAX_SQL_RETRIES,
+        )
+
+        # Log the schema context being used
+        logger.debug(
+            "[%s] Schema Context (first 500 chars):\n%s",
+            self.name,
+            state.system_context[:500]
+        )
+        logger.debug("[%s] User Query: %s", self.name, state.user_query)
+
+        # Log schema context details
+        if state.system_context:
+            # Check what tables are in the context
+            has_loans = "loans" in state.system_context.lower()
+            has_customers = "customers" in state.system_context.lower()
+            has_payments = "loan_payments" in state.system_context.lower(
+            ) or "loan payments" in state.system_context.lower()
+            has_due_date = "due_date" in state.system_context.lower()
+
+            logger.info(
+                "[%s] ════════════════════════════════════════\n"
+                "[%s] SCHEMA CONTEXT CHECK:\n"
+                "[%s] Tables found: Loans=%s, Customers=%s, LoanPayments=%s\n"
+                "[%s] Key columns: due_date=%s\n"
+                "[%s] Context size: %d chars\n"
+                "[%s] ════════════════════════════════════════",
+                self.name, self.name,
+                self.name, "✓" if has_loans else "✗", "✓" if has_customers else "✗", "✓" if has_payments else "✗",
+                self.name, "✓" if has_due_date else "✗",
+                self.name, len(state.system_context),
+                self.name
+            )
+
+        user_msg = (
+            f"Schema Context:\n{state.system_context}\n\n"
+            f"User Query: {state.user_query}"
+        )
+        if state.validator_feedback:
+            logger.warning(
+                "[%s] Retry with validator feedback: %s",
+                self.name,
+                state.validator_feedback
+            )
+            user_msg += (
+                f"\n\nPrevious SQL (attempt {state.sql_attempt - 1}):\n{state.generated_sql}\n\n"
+                f"Validator Feedback:\n{state.validator_feedback}\n\n"
+                "Please fix the above issues in the revised SQL."
+            )
+
+        raw: str = call_llm(
+            self._SYSTEM,
+            user_msg,
+            history=state.conversation_history or None,
+        )
+        sql = re.sub(
+            r"^```(?:sql)?\s*|\s*```$", "", raw.strip(), flags=re.MULTILINE
+        ).strip()
+        state.generated_sql = sql
+
+        # Log full SQL query for debugging
+        logger.info("[%s] GENERATED SQL (Attempt %d):\n%s",
+                    self.name, state.sql_attempt, sql)
+
+        return state

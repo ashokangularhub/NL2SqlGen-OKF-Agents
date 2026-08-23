@@ -1,0 +1,36 @@
+# Environments
+.venv/
+venv/
+env/
+ENV/
+.env
+
+# Python bytecode / build artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+build/
+dist/
+documents/
+
+# Databases (generated/seed data)
+*.db
+*.sqlite3
+
+# Runtime/session state
+conversation_history.json
+
+# IDE / editor
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# NOTE: documentation files (*.md, *.html) are intentionally tracked, not ignored.
