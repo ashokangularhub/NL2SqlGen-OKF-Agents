@@ -53,13 +53,13 @@ TEST_CASES: list[TestCase] = [
     TestCase(
         description="Total customer count",
         nl_query="How many customers are in the database?",
-        reference_sql="SELECT COUNT(*) AS total FROM customers",
+        reference_sql="SELECT COUNT(*) AS total FROM bank_customers",
         compare="value",
     ),
     TestCase(
         description="Active account count",
         nl_query="How many active accounts are there?",
-        reference_sql="SELECT COUNT(*) AS total FROM accounts WHERE status = 'active'",
+        reference_sql="SELECT COUNT(*) AS total FROM bank_accounts WHERE status = 'active'",
         compare="value",
     ),
     TestCase(
@@ -111,19 +111,19 @@ TEST_CASES: list[TestCase] = [
     TestCase(
         description="Frozen accounts list",
         nl_query="List all frozen accounts",
-        reference_sql="SELECT * FROM accounts WHERE status = 'frozen' LIMIT 50",
+        reference_sql="SELECT * FROM bank_accounts WHERE status = 'frozen' LIMIT 50",
         compare="count",
     ),
     TestCase(
         description="High risk customers list",
         nl_query="Show customers with high risk tier",
-        reference_sql="SELECT * FROM customers WHERE risk_tier = 'high' LIMIT 50",
+        reference_sql="SELECT * FROM bank_customers WHERE risk_tier = 'high' LIMIT 50",
         compare="count",
     ),
     TestCase(
         description="Expired KYC customers list",
         nl_query="List customers whose KYC status is expired",
-        reference_sql="SELECT * FROM customers WHERE kyc_status = 'expired' LIMIT 50",
+        reference_sql="SELECT * FROM bank_customers WHERE kyc_status = 'expired' LIMIT 50",
         compare="count",
     ),
     TestCase(
@@ -135,7 +135,7 @@ TEST_CASES: list[TestCase] = [
     TestCase(
         description="Pending KYC customers list",
         nl_query="List customers with pending KYC status",
-        reference_sql="SELECT * FROM customers WHERE kyc_status = 'pending' LIMIT 50",
+        reference_sql="SELECT * FROM bank_customers WHERE kyc_status = 'pending' LIMIT 50",
         compare="count",
     ),
     TestCase(

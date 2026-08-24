@@ -24,7 +24,7 @@ logger = logging.getLogger("clearbank.agent.sql_validator")
 # ── Hardcoded Schemas for Common Tables (Authoritative Source) ────────────
 
 KNOWN_SCHEMAS = {
-    "customers": {
+    "bank_customers": {
         "customer_id", "first_name", "last_name", "date_of_birth",
         "email", "phone", "kyc_status", "risk_tier", "onboarded_at", "status"
     },
@@ -36,7 +36,7 @@ KNOWN_SCHEMAS = {
         "payment_id", "loan_id", "due_date", "paid_at", "amount_due",
         "amount_paid", "status"
     },
-    "accounts": {
+    "bank_accounts": {
         "account_id", "customer_id", "account_type", "balance",
         "currency", "status", "opened_at", "closed_at"
     },
@@ -208,7 +208,7 @@ def validate_join_column_qualification(sql: str) -> tuple[bool, str]:
     Check for ambiguous column references in JOINs.
 
     If SQL contains a JOIN, columns that exist in multiple tables MUST be
-    qualified with their table name (e.g., Customers.customer_id, not just customer_id).
+    qualified with their table name (e.g., bank_customers.customer_id, not just customer_id).
 
     Returns:
       (valid: bool, error_msg: str)
@@ -221,9 +221,9 @@ def validate_join_column_qualification(sql: str) -> tuple[bool, str]:
 
     # Columns that appear in multiple tables (common foreign keys)
     shared_columns = {
-        'customer_id',      # in customers, loans, accounts, flags
-        'account_id',       # in accounts, transactions
-        'status',           # in customers, accounts, transactions, flags, loans
+        'customer_id',      # in bank_customers, loans, bank_accounts, flags
+        'account_id',       # in bank_accounts, transactions
+        'status',           # in bank_customers, bank_accounts, transactions, flags, loans
     }
 
     # Extract unqualified columns from the SELECT clause
@@ -241,7 +241,7 @@ def validate_join_column_qualification(sql: str) -> tuple[bool, str]:
     for col in shared_columns:
         col_upper = col.upper()
         # Match: word boundary + column name + not preceded by dot
-        # Pattern matches "customer_id" but not "Customers.customer_id"
+        # Pattern matches "customer_id" but not "BankCustomers.customer_id"
         pattern = rf"(?<!\w|\.)(?<!\.)(?:^|,|\s)({col_upper})(?:\s|,|$|\))"
 
         for match in re.finditer(pattern, select_clause, re.IGNORECASE):
@@ -258,8 +258,8 @@ def validate_join_column_qualification(sql: str) -> tuple[bool, str]:
             f"These columns exist in multiple tables and must be qualified:\n"
             f"  - {', '.join(problematic_columns)}\n\n"
             f"SOLUTION: Use table prefixes for all columns when joining:\n"
-            f"  WRONG: SELECT customer_id, account_id FROM Customers JOIN Accounts ...\n"
-            f"  RIGHT: SELECT Customers.customer_id, Accounts.account_id FROM Customers JOIN Accounts ...\n\n"
+            f"  WRONG: SELECT customer_id, account_id FROM bank_customers JOIN bank_accounts ...\n"
+            f"  RIGHT: SELECT bank_customers.customer_id, bank_accounts.account_id FROM bank_customers JOIN bank_accounts ...\n\n"
             f"IMPORTANT: Qualify ALL columns with their table names when using JOINs."
         )
         return False, error_msg
@@ -329,7 +329,7 @@ class SQLValidatorAgent(BaseAgent):
         "You are a SQL validator for a banking system. Be thorough but fair.\n\n"
         "IMPORTANT: Table names and column names have ALREADY been verified\n"
         "programmatically against the real database schema before you see this SQL.\n"
-        "Every table name (e.g. loan_payments, customers, loans) is CONFIRMED CORRECT\n"
+        "Every table name (e.g. loan_payments, bank_customers, loans) is CONFIRMED CORRECT\n"
         "snake_case exactly as it appears in the SQL. Do NOT flag table or column\n"
         "names as misspelled, wrong case, or needing spaces/CamelCase — that has\n"
         "already been checked and passed. Focus ONLY on the checks below.\n\n"
@@ -388,7 +388,7 @@ class SQLValidatorAgent(BaseAgent):
             return state
 
         # PROGRAMMATIC VALIDATION: Check for ambiguous columns in JOINs
-        # This catches errors like using 'customer_id' without 'Customers.' prefix
+        # This catches errors like using 'customer_id' without 'bank_customers.' prefix
         join_valid, join_error = validate_join_column_qualification(
             state.generated_sql
         )

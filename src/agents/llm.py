@@ -154,11 +154,11 @@ def _mock_llm(system: str, user: str, *, json_mode: bool) -> str | dict[str, Any
     if "context builder" in sl or ("context" in sl and "schema context" in sl):
         return (
             "# Schema Context (Mock)\n\n"
-            "**Tables:** customers, accounts, transactions, loans, loan_payments, flags\n\n"
+            "**Tables:** bank_customers, bank_accounts, transactions, loans, loan_payments, flags\n\n"
             "**Key columns:**\n"
-            "- customers: customer_id, full_name, email, kyc_status ∈ {verified,pending,expired,rejected}, "
+            "- bank_customers: customer_id, full_name, email, kyc_status ∈ {verified,pending,expired,rejected}, "
             "status ∈ {active,inactive,blacklisted}, created_at\n"
-            "- accounts: account_id, customer_id (FK), account_type ∈ {savings,checking,fixed_deposit}, "
+            "- bank_accounts: account_id, customer_id (FK), account_type ∈ {savings,checking,fixed_deposit}, "
             "balance, status ∈ {active,frozen,blocked,closed}\n"
             "- transactions: txn_id, customer_id (FK), account_id (FK), amount, type, "
             "status ∈ {completed,pending,failed,reversed}, txn_at\n"
@@ -193,31 +193,31 @@ def _mock_sql_for_query(query: str) -> str:
     if "delinquent" in q or "overdue loan" in q:
         return (
             "SELECT l.loan_id, c.full_name, l.outstanding_balance, l.status "
-            "FROM loans l JOIN customers c ON l.customer_id = c.customer_id "
+            "FROM loans l JOIN bank_customers c ON l.customer_id = c.customer_id "
             "WHERE l.status = 'delinquent' ORDER BY l.outstanding_balance DESC LIMIT 20"
         )
     if "kyc" in q and any(w in q for w in ["pending", "expired", "unverified"]):
         return (
             "SELECT customer_id, full_name, kyc_status, kyc_expiry_date "
-            "FROM customers WHERE kyc_status IN ('pending','expired') "
+            "FROM bank_customers WHERE kyc_status IN ('pending','expired') "
             "ORDER BY kyc_expiry_date"
         )
     if "transaction" in q and any(w in q for w in ["failed", "pending"]):
         return (
             "SELECT t.txn_id, c.full_name, t.amount, t.status, t.txn_at "
-            "FROM transactions t JOIN customers c ON t.customer_id = c.customer_id "
+            "FROM transactions t JOIN bank_customers c ON t.customer_id = c.customer_id "
             "WHERE t.status IN ('failed','pending') ORDER BY t.txn_at DESC LIMIT 20"
         )
     if any(w in q for w in ["flag", "aml", "fraud", "alert"]):
         return (
             "SELECT f.flag_id, c.full_name, f.flag_type, f.severity, f.status, f.flagged_at "
-            "FROM flags f JOIN customers c ON f.customer_id = c.customer_id "
+            "FROM flags f JOIN bank_customers c ON f.customer_id = c.customer_id "
             "WHERE f.status = 'open' ORDER BY f.flagged_at DESC LIMIT 20"
         )
     if "frozen" in q or "blocked" in q:
         return (
             "SELECT a.account_id, c.full_name, a.account_type, a.status, a.balance "
-            "FROM accounts a JOIN customers c ON a.customer_id = c.customer_id "
+            "FROM bank_accounts a JOIN bank_customers c ON a.customer_id = c.customer_id "
             "WHERE a.status IN ('frozen','blocked')"
         )
     if "npa" in q:
@@ -245,7 +245,7 @@ def _mock_sql_for_query(query: str) -> str:
         return (
             "SELECT ROUND(100.0 * SUM(CASE WHEN kyc_status='verified' THEN 1 ELSE 0 END) "
             "/ NULLIF(COUNT(*),0),2) AS kyc_completion_rate_pct, "
-            "COUNT(*) AS total_customers FROM customers WHERE status='active'"
+            "COUNT(*) AS total_customers FROM bank_customers WHERE status='active'"
         )
     if "loan" in q and any(w in q for w in ["count", "how many", "summary"]):
         return (
@@ -255,5 +255,5 @@ def _mock_sql_for_query(query: str) -> str:
         )
     return (
         "SELECT customer_id, full_name, email, kyc_status, status "
-        "FROM customers WHERE status = 'active' ORDER BY created_at DESC LIMIT 20"
+        "FROM bank_customers WHERE status = 'active' ORDER BY created_at DESC LIMIT 20"
     )

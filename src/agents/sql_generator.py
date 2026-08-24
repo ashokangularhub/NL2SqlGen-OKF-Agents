@@ -30,7 +30,7 @@ class SQLGeneratorAgent(BaseAgent):
         "CRITICAL RULES (VIOLATIONS CAUSE SQL ERRORS):\n"
         "  1. ALWAYS use EXACT column names from schema context\n"
         "  2. ALWAYS use EXACT table names from 'Database Table Names' section (snake_case)\n"
-        "     Examples: loan_payments (NOT LoanPayments), customers (NOT Customers)\n"
+        "     Examples: loan_payments (NOT LoanPayments), bank_customers (NOT BankCustomers)\n"
         "  3. NEVER combine columns (e.g., first_name + last_name is NOT 'full_name')\n"
         "  4. NEVER invent columns that don't exist in schema\n"
         "  5. If a column isn't in schema, SELECT both separate columns OR use one that exists\n"
@@ -40,7 +40,7 @@ class SQLGeneratorAgent(BaseAgent):
         "  9. Apply LIMIT 50 unless user requests aggregate/metric\n"
         "  10. Do NOT wrap output in markdown or explanations\n"
         "  11. **WHEN USING JOINS: ALWAYS qualify ALL column names with their table name**\n"
-        "       Example: SELECT customers.customer_id, customers.first_name, loans.loan_id, loans.status\n"
+        "       Example: SELECT bank_customers.customer_id, bank_customers.first_name, loans.loan_id, loans.status\n"
         "       DO NOT use unqualified names like 'customer_id' when joining—this causes ambiguous errors\n"
         "  12. **Date/time filters**: Use ISO format (YYYY-MM-DD) and comparison operators\n"
         "       Example: WHERE loans.maturity_date > '2024-01-01'\n"
@@ -50,8 +50,8 @@ class SQLGeneratorAgent(BaseAgent):
         "                 'function pg_catalog.extract(unknown, integer) does not exist'\n"
         "       Only use EXTRACT(...) on an actual INTERVAL/TIMESTAMP, e.g. EXTRACT(DAY FROM AGE(a, b))\n\n"
         "TABLE NAME REFERENCE:\n"
-        "  ✅ Correct (snake_case): FROM customers, FROM loan_payments, JOIN loans ON ...\n"
-        "  ❌ WRONG (CamelCase): FROM LoanPayments, FROM Customers (will cause 'relation does not exist' error)\n\n"
+        "  ✅ Correct (snake_case): FROM bank_customers, FROM loan_payments, JOIN loans ON ...\n"
+        "  ❌ WRONG (CamelCase): FROM LoanPayments, FROM BankCustomers (will cause 'relation does not exist' error)\n\n"
         "BEFORE GENERATING SQL:\n"
         "  1. Check the 'Database Table Names' section for the ACTUAL table names to use\n"
         "  2. Identify all tables needed for the query\n"
@@ -61,10 +61,10 @@ class SQLGeneratorAgent(BaseAgent):
         "  6. If using JOINs, prefix EVERY column with its snake_case table name\n"
         "  7. Handle NULL values if needed (WHERE column IS NOT NULL)\n\n"
         "COMMON BANKING QUERIES (with correct table names):\n"
-        "  • Loans + Customers: JOIN on loans.customer_id = customers.customer_id\n"
+        "  • Loans + Bank Customers: JOIN on loans.customer_id = bank_customers.customer_id\n"
         "  • Loans + Loan Payments: JOIN on loans.loan_id = loan_payments.loan_id\n"
         "  • Upcoming Payments: SELECT loan_payments.due_date FROM loan_payments WHERE status = 'upcoming'\n"
-        "  • Customers + Accounts: JOIN on customers.customer_id = accounts.customer_id\n"
+        "  • Bank Customers + Bank Accounts: JOIN on bank_customers.customer_id = bank_accounts.customer_id\n"
         "  • Filter by status: WHERE loans.status = 'active'\n"
         "  • Filter by date: WHERE loan_payments.due_date > '2024-01-15'\n\n"
         "COLUMN NAME MAPPINGS (Do NOT use alternative spellings):\n"
@@ -72,7 +72,7 @@ class SQLGeneratorAgent(BaseAgent):
         "  • loan_payments.paid_at = TIMESTAMP when payment was RECEIVED (NULL if unpaid)\n"
         "  • loan_payments.status = ENUM: 'upcoming', 'paid', 'overdue', 'partial', 'waived'\n"
         "  • loans.maturity_date = final maturity of the loan (NOT 'next_payment_due')\n"
-        "  • customers.first_name + customers.last_name = customer's name (NOT 'full_name')\n\n"
+        "  • bank_customers.first_name + bank_customers.last_name = customer's name (NOT 'full_name')\n\n"
         "If validator feedback says a column is ambiguous or doesn't exist:\n"
         "  1. Check the schema for all tables involved in JOINs\n"
         "  2. Rewrite using fully qualified names: table_name.column_name\n"
@@ -99,7 +99,7 @@ class SQLGeneratorAgent(BaseAgent):
         if state.system_context:
             # Check what tables are in the context
             has_loans = "loans" in state.system_context.lower()
-            has_customers = "customers" in state.system_context.lower()
+            has_customers = "bank_customers" in state.system_context.lower()
             has_payments = "loan_payments" in state.system_context.lower(
             ) or "loan payments" in state.system_context.lower()
             has_due_date = "due_date" in state.system_context.lower()
