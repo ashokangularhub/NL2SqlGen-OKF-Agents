@@ -111,24 +111,6 @@ def _mock_llm(system: str, user: str, *, json_mode: bool) -> str | dict[str, Any
         intent = "domain" if any(kw in ul for kw in domain_kws) else "general"
         return {"intent": intent} if json_mode else intent
 
-    # ── Section selection ─────────────────────────────────────────────
-    if "section" in sl and any(s in sl for s in ("tables", "metrics", "runbooks", "datasets")):
-        if any(w in ul for w in [
-            "runbook", "steps for", "procedure", "aml investigation",
-            "kyc renewal", "loan restructuring", "how to", "workflow",
-        ]):
-            sec = "Runbooks"
-        elif any(w in ul for w in [
-            "metric", "kpi", "delinquency rate", "npa ratio",
-            "success rate", "kyc completion", "ratio", "percentage",
-        ]):
-            sec = "Metrics"
-        elif any(w in ul for w in ["dataset", "database", "retention", "storage"]):
-            sec = "Datasets"
-        else:
-            sec = "Tables"
-        return {"section": sec} if json_mode else sec
-
     # ── Error response ────────────────────────────────────────────────
     if "error handler" in sl or ("unable to complete" in sl and "expose" in sl):
         return (
@@ -189,36 +171,42 @@ def _mock_llm(system: str, user: str, *, json_mode: bool) -> str | dict[str, Any
 
 def _mock_sql_for_query(query: str) -> str:
     """Return a plausible SELECT statement for common banking queries."""
-    q = query.lower()
+    # Match against the actual user question only — the schema context
+    # preamble contains table/column/ENUM words that would otherwise trigger
+    # the wrong branch (e.g. "flags" in the schema listing).
+    marker = "user query:"
+    idx = query.lower().rfind(marker)
+    q = query[idx + len(marker):].lower() if idx != -1 else query.lower()
     if "delinquent" in q or "overdue loan" in q:
         return (
-            "SELECT l.loan_id, c.full_name, l.outstanding_balance, l.status "
+            "SELECT l.loan_id, c.first_name, c.last_name, l.outstanding_balance, l.status "
             "FROM loans l JOIN bank_customers c ON l.customer_id = c.customer_id "
             "WHERE l.status = 'delinquent' ORDER BY l.outstanding_balance DESC LIMIT 20"
         )
     if "kyc" in q and any(w in q for w in ["pending", "expired", "unverified"]):
         return (
-            "SELECT customer_id, full_name, kyc_status, kyc_expiry_date "
+            "SELECT customer_id, first_name, last_name, kyc_status, onboarded_at "
             "FROM bank_customers WHERE kyc_status IN ('pending','expired') "
-            "ORDER BY kyc_expiry_date"
+            "ORDER BY onboarded_at"
         )
     if "transaction" in q and any(w in q for w in ["failed", "pending"]):
         return (
-            "SELECT t.txn_id, c.full_name, t.amount, t.status, t.txn_at "
-            "FROM transactions t JOIN bank_customers c ON t.customer_id = c.customer_id "
+            "SELECT t.txn_id, c.first_name, c.last_name, t.amount, t.status, t.txn_at "
+            "FROM transactions t "
+            "JOIN bank_accounts a ON t.account_id = a.account_id "
+            "JOIN bank_customers c ON a.customer_id = c.customer_id "
             "WHERE t.status IN ('failed','pending') ORDER BY t.txn_at DESC LIMIT 20"
         )
     if any(w in q for w in ["flag", "aml", "fraud", "alert"]):
         return (
-            "SELECT f.flag_id, c.full_name, f.flag_type, f.severity, f.status, f.flagged_at "
-            "FROM flags f JOIN bank_customers c ON f.customer_id = c.customer_id "
-            "WHERE f.status = 'open' ORDER BY f.flagged_at DESC LIMIT 20"
+            "SELECT flag_id, entity_type, entity_id, flag_reason, severity, status, raised_at "
+            "FROM flags WHERE status = 'open' ORDER BY raised_at DESC LIMIT 20"
         )
     if "frozen" in q or "blocked" in q:
         return (
-            "SELECT a.account_id, c.full_name, a.account_type, a.status, a.balance "
+            "SELECT a.account_id, c.first_name, c.last_name, a.account_type, a.status, a.balance "
             "FROM bank_accounts a JOIN bank_customers c ON a.customer_id = c.customer_id "
-            "WHERE a.status IN ('frozen','blocked')"
+            "WHERE a.status IN ('frozen','closed')"
         )
     if "npa" in q:
         return (
@@ -228,7 +216,7 @@ def _mock_sql_for_query(query: str) -> str:
         )
     if "delinquency rate" in q:
         return (
-            "SELECT strftime('%Y-%m', lp.due_date) AS month, "
+            "SELECT TO_CHAR(lp.due_date, 'YYYY-MM') AS month, "
             "ROUND(100.0 * COUNT(DISTINCT CASE WHEN lp.status='overdue' THEN l.loan_id END) "
             "/ NULLIF(COUNT(DISTINCT l.loan_id),0),2) AS delinquency_rate_pct "
             "FROM loans l JOIN loan_payments lp ON l.loan_id = lp.loan_id "
@@ -236,7 +224,7 @@ def _mock_sql_for_query(query: str) -> str:
         )
     if "transaction success" in q or "success rate" in q:
         return (
-            "SELECT strftime('%Y-%m', txn_at) AS month, "
+            "SELECT TO_CHAR(txn_at, 'YYYY-MM') AS month, "
             "ROUND(100.0 * SUM(CASE WHEN status='completed' THEN 1 ELSE 0 END) "
             "/ NULLIF(COUNT(*),0),2) AS success_rate_pct, COUNT(*) AS total "
             "FROM transactions GROUP BY 1 ORDER BY 1 DESC LIMIT 6"
@@ -254,6 +242,6 @@ def _mock_sql_for_query(query: str) -> str:
             "FROM loans GROUP BY status ORDER BY count DESC"
         )
     return (
-        "SELECT customer_id, full_name, email, kyc_status, status "
-        "FROM bank_customers WHERE status = 'active' ORDER BY created_at DESC LIMIT 20"
+        "SELECT customer_id, first_name, last_name, email, kyc_status, status "
+        "FROM bank_customers WHERE status = 'active' ORDER BY onboarded_at DESC LIMIT 20"
     )

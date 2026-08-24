@@ -39,6 +39,10 @@ _SRC = Path(__file__).parent
 if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
+# Load .env (OPENAI_API_KEY, OKF_BUNDLE_AGENT_URL, ...) before agents are imported
+from dotenv import load_dotenv  # noqa: E402
+load_dotenv(_SRC.parent / ".env")
+
 from agents import (  # noqa: E402
     AgentState,
     run_pipeline,
