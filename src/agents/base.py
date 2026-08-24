@@ -8,12 +8,11 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass, field
-from pathlib import Path
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 
-BUNDLE_ROOT = Path(__file__).parent.parent.parent / "okf_bundle"
-FASTAPI_SQL_URL = os.environ.get("SQL_SERVICE_URL", "http://localhost:8000") + "/query"
+FASTAPI_SQL_URL = os.environ.get(
+    "SQL_SERVICE_URL", "http://localhost:8000") + "/query"
 OPENAI_URL = "https://api.openai.com/v1/chat/completions"
 OPENAI_MODEL = os.environ.get("OPENAI_MODEL", "gpt-4o")
 MAX_SQL_RETRIES = 3
@@ -21,32 +20,6 @@ SQL_CONFIDENCE_THRESHOLD = 0.85
 
 # Sentinel: SQLValidatorAgent sets state.error to this to signal a retry
 _VALIDATION_FAILED = "__VALIDATION_FAILED__"
-
-# OKF Section → relative markdown file paths
-SECTION_FILES: dict[str, list[str]] = {
-    "Tables": [
-        "tables/customers.md",
-        "tables/accounts.md",
-        "tables/transactions.md",
-        "tables/loans.md",
-        "tables/loan_payments.md",
-        "tables/flags.md",
-    ],
-    "Metrics": [
-        "metrics/loan_delinquency_rate.md",
-        "metrics/npa_ratio.md",
-        "metrics/transaction_success_rate.md",
-        "metrics/kyc_completion_rate.md",
-    ],
-    "Runbooks": [
-        "runbooks/aml_alert_investigation.md",
-        "runbooks/loan_restructuring.md",
-        "runbooks/kyc_renewal.md",
-    ],
-    "Datasets": [
-        "datasets/retail_bank.db.md",
-    ],
-}
 
 
 # ── Shared Pipeline State ──────────────────────────────────────────────────────

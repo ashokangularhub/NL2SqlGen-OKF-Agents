@@ -34,7 +34,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 import json as _json
 
-# ── Path setup — allow 'agents' and 'okf_parser' imports ─────────────────────
+# ── Path setup — allow 'agents' package imports ───────────────────────────────
 _SRC = Path(__file__).parent
 if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
