@@ -11,8 +11,33 @@ from dataclasses import dataclass, field
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 
-FASTAPI_SQL_URL = os.environ.get(
-    "SQL_SERVICE_URL", "http://localhost:8000") + "/query"
+# Registry of SQL execution backends this pipeline can call. Every backend
+# must implement the same REST contract as sql-service's POST /query:
+#   request:  {"sql": str, "max_rows": int}
+#   response: {"columns": [...], "rows": [[...]], "row_count": int,
+#              "truncated": bool, "sql": str}
+# Add new tools/projects here (name -> (env var holding its base URL, default
+# base URL)); select the active one via the SQL_EXECUTOR_BACKEND env var.
+SQL_EXECUTOR_BACKENDS: dict[str, tuple[str, str]] = {
+    "sql_service": ("SQL_SERVICE_URL", "http://localhost:8000"),
+    "customer_support_db_tool": ("CUSTOMER_SUPPORT_DB_TOOL_URL", "http://localhost:8003"),
+}
+
+
+def get_sql_service_url() -> str:
+    """Resolve the active SQL execution backend's /query URL.
+
+    Backend is chosen via the SQL_EXECUTOR_BACKEND env var (default
+    "sql_service"); falls back to "sql_service" if an unknown name is set.
+    """
+    backend = os.environ.get("SQL_EXECUTOR_BACKEND", "sql_service")
+    env_var, default_url = SQL_EXECUTOR_BACKENDS.get(
+        backend, SQL_EXECUTOR_BACKENDS["sql_service"]
+    )
+    base_url = os.environ.get(env_var, default_url)
+    return base_url.rstrip("/") + "/query"
+
+
 OPENAI_URL = "https://api.openai.com/v1/chat/completions"
 OPENAI_MODEL = os.environ.get("OPENAI_MODEL", "gpt-4o")
 MAX_SQL_RETRIES = 3

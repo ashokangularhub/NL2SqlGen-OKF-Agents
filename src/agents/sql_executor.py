@@ -1,8 +1,9 @@
 """
 agents/sql_executor.py — Agent 10: SQLExecutorAgent
 
-Tool agent: POSTs validated SQL to the FastAPI + SQLite sql-service and
-populates state.db_result on success, or state.error on failure.
+Tool agent: POSTs validated SQL to the active SQL execution backend (see
+SQL_EXECUTOR_BACKENDS in base.py) and populates state.db_result on success,
+or state.error on failure.
 """
 
 from __future__ import annotations
@@ -11,22 +12,24 @@ import logging
 
 import httpx
 
-from .base import AgentState, BaseAgent, FASTAPI_SQL_URL
+from .base import AgentState, BaseAgent, get_sql_service_url
 
 logger = logging.getLogger("clearbank.agent.sql_executor")
 
 
 class SQLExecutorAgent(BaseAgent):
     """
-    Tool agent. POSTs the validated SQL to the FastAPI + SQLite sql-service at
-    FASTAPI_SQL_URL. Populates state.db_result on success;
-    sets state.error on DB-level or connection failures.
+    Tool agent. POSTs the validated SQL to the active SQL execution backend
+    (resolved via get_sql_service_url() / SQL_EXECUTOR_BACKEND env var).
+    Populates state.db_result on success; sets state.error on DB-level or
+    connection failures.
     """
 
     name = "SQLExecutorAgent"
 
     def run(self, state: AgentState) -> AgentState:
         sql = state.generated_sql.strip()
+        sql_service_url = get_sql_service_url()
         logger.info(
             "[%s] ════════════════════════════════════════\n"
             "[%s] EXECUTING SQL QUERY:\n"
@@ -43,9 +46,9 @@ class SQLExecutorAgent(BaseAgent):
 
         try:
             logger.info("[%s] Sending request to: %s",
-                        self.name, FASTAPI_SQL_URL)
+                        self.name, sql_service_url)
             resp = httpx.post(
-                FASTAPI_SQL_URL,
+                sql_service_url,
                 json={"sql": sql, "max_rows": 1000},
                 timeout=30,
             )
@@ -55,12 +58,12 @@ class SQLExecutorAgent(BaseAgent):
             data: dict = resp.json()
         except httpx.ConnectError:
             state.error = (
-                f"Cannot reach database service at {FASTAPI_SQL_URL}. "
+                f"Cannot reach database service at {sql_service_url}. "
                 "Ensure the FastAPI server is running (`uvicorn ...`)."
             )
             logger.error(
                 "[%s] ❌ CONNECTION ERROR:\n%s\n"
-                "[%s] Please check if sql-service is running on port 8000",
+                "[%s] Please check if the configured SQL backend is running",
                 self.name, state.error, self.name
             )
             return state
