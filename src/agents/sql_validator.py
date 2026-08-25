@@ -20,6 +20,11 @@ from .llm import call_llm
 
 logger = logging.getLogger("clearbank.agent.sql_validator")
 
+# Postgres schemas used to qualify FROM/JOIN targets for non-default domains
+# (e.g. "FROM customer_support.orders"). Column extraction must not mistake
+# the table name following the schema prefix for a column reference.
+KNOWN_SCHEMA_PREFIXES = {"customer_support"}
+
 
 # ── Hardcoded Schemas for Common Tables (Authoritative Source) ────────────
 
@@ -47,6 +52,63 @@ KNOWN_SCHEMAS = {
     "flags": {
         "flag_id", "customer_id", "flag_type", "severity", "reason",
         "created_at", "resolved_at", "status"
+    },
+    # ── customer_support domain (schema-qualified in real SQL) ──────────
+    "products": {
+        "product_id", "product_name", "category", "base_price", "currency",
+        "is_active", "launch_date", "discontinued_date", "created_at", "updated_at"
+    },
+    "product_variants": {
+        "sku", "product_id", "variant_label", "variant_type", "price_delta", "is_active"
+    },
+    "product_pricing": {
+        "sku", "current_price", "discount_pct", "promo_label",
+        "promo_start_date", "promo_end_date", "last_price_update"
+    },
+    "warehouses": {
+        "warehouse_id", "warehouse_name", "city", "region", "is_active"
+    },
+    "inventory": {
+        "inventory_id", "sku", "warehouse_id", "quantity_on_hand",
+        "quantity_reserved", "reorder_threshold", "restock_eta_date", "last_updated"
+    },
+    "customers": {
+        "customer_id", "full_name", "email", "phone", "customer_tier", "created_at"
+    },
+    "orders": {
+        "order_id", "customer_id", "order_status", "order_date", "payment_status",
+        "shipping_address", "shipping_city", "warehouse_id", "subtotal_amount",
+        "shipping_amount", "total_amount", "currency", "estimated_delivery_date",
+        "actual_delivery_date", "last_updated"
+    },
+    "order_items": {
+        "order_item_id", "order_id", "sku", "quantity", "unit_price",
+        "line_total", "item_status"
+    },
+    "shipments": {
+        "shipment_id", "order_id", "carrier_name", "tracking_number",
+        "shipment_status", "shipped_date", "delivered_date",
+        "current_location", "exception_reason"
+    },
+    "order_status_history": {
+        "history_id", "order_id", "status", "status_timestamp", "notes"
+    },
+    "return_requests": {
+        "return_id", "order_id", "order_item_id", "customer_id", "return_reason",
+        "return_reason_detail", "requested_resolution", "return_status",
+        "requested_at", "eligibility_decision", "eligibility_reason",
+        "quality_check_status", "resolved_at"
+    },
+    "return_window_policy": {
+        "category", "window_days", "condition_requirement"
+    },
+    "refunds": {
+        "refund_id", "return_id", "refund_amount", "refund_method",
+        "refund_status", "bonus_credit_applied", "initiated_at", "completed_at"
+    },
+    "item_condition_flags": {
+        "order_item_id", "already_returned", "modified_by_customer",
+        "is_bundle_component", "damage_reported_at", "notes"
     },
 }
 
@@ -115,6 +177,11 @@ def extract_columns_from_sql(sql: str) -> set[str]:
     # Match: table.column (e.g., c.full_name, l.loan_id)
     pattern = r"(\w+)\.(\w+)"
     for match in re.finditer(pattern, sql_lower):
+        table_part = match.group(1)
+        # Skip schema-qualified FROM/JOIN targets (e.g. customer_support.orders) —
+        # the token after the dot there is a TABLE name, not a column.
+        if table_part in KNOWN_SCHEMA_PREFIXES:
+            continue
         col_name = match.group(2)  # Get the column part after the dot
         columns.add(col_name)
 
@@ -221,9 +288,16 @@ def validate_join_column_qualification(sql: str) -> tuple[bool, str]:
 
     # Columns that appear in multiple tables (common foreign keys)
     shared_columns = {
-        'customer_id',      # in bank_customers, loans, bank_accounts, flags
+        # in bank_customers, loans, bank_accounts, flags, customers, orders, return_requests
+        'customer_id',
         'account_id',       # in bank_accounts, transactions
         'status',           # in bank_customers, bank_accounts, transactions, flags, loans
+        'order_id',         # in orders, order_items, shipments, order_status_history, return_requests
+        'order_item_id',    # in order_items, return_requests, item_condition_flags
+        'sku',              # in product_variants, product_pricing, inventory, order_items
+        'warehouse_id',     # in warehouses, inventory, orders
+        'category',         # in products, return_window_policy
+        'return_id',        # in return_requests, refunds
     }
 
     # Extract unqualified columns from the SELECT clause
@@ -270,7 +344,8 @@ def validate_join_column_qualification(sql: str) -> tuple[bool, str]:
 def extract_tables_from_sql(sql: str) -> set[str]:
     """
     Extract table names referenced in FROM/JOIN clauses (lowercase).
-    Handles optional quoting, e.g. FROM "Loan Payments" or FROM loan_payments.
+    Handles optional quoting, e.g. FROM "Loan Payments" or FROM loan_payments,
+    and optional schema qualification, e.g. FROM customer_support.orders.
     """
     tables = set()
 
@@ -278,8 +353,9 @@ def extract_tables_from_sql(sql: str) -> set[str]:
     for match in re.finditer(r'\b(?:FROM|JOIN)\s+"([^"]+)"', sql, re.IGNORECASE):
         tables.add(match.group(1).strip().lower())
 
-    # Plain identifiers (snake_case, single token, no spaces), e.g. FROM loan_payments
-    for match in re.finditer(r'\b(?:FROM|JOIN)\s+(\w+)', sql, re.IGNORECASE):
+    # Plain identifiers, optionally schema-qualified, e.g. FROM loan_payments
+    # or FROM customer_support.orders
+    for match in re.finditer(r'\b(?:FROM|JOIN)\s+(\w+(?:\.\w+)?)', sql, re.IGNORECASE):
         tables.add(match.group(1).strip().lower())
 
     return tables
@@ -301,13 +377,18 @@ def validate_table_names_exist(sql: str) -> tuple[bool, str]:
     known_tables = set(KNOWN_SCHEMAS.keys())
     sql_tables = extract_tables_from_sql(sql)
 
-    invalid_tables = {t for t in sql_tables if t not in known_tables}
+    # customer_support tables are schema-qualified (e.g. customer_support.orders);
+    # KNOWN_SCHEMAS keys are bare table names, so strip the schema prefix first.
+    invalid_tables = {
+        t for t in sql_tables if t.rsplit(".", 1)[-1] not in known_tables
+    }
     if invalid_tables:
         error_msg = (
             f"❌ SQL ERROR: Table name(s) don't exist in database: {', '.join(sorted(invalid_tables))}\n"
             f"Valid tables (snake_case, exact spelling): {', '.join(sorted(known_tables))}\n"
             f"💡 Table names must be lowercase snake_case (e.g. 'loan_payments'), "
-            f"NEVER human-readable titles with spaces or CamelCase (e.g. NOT 'Loan Payments', NOT 'LoanPayments')."
+            f"NEVER human-readable titles with spaces or CamelCase (e.g. NOT 'Loan Payments', NOT 'LoanPayments').\n"
+            f"💡 customer_support domain tables must be schema-qualified, e.g. 'customer_support.orders'."
         )
         return False, error_msg
 

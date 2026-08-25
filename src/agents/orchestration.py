@@ -42,19 +42,22 @@ class OrchestrationAgent(BaseAgent):
             # ── Step 1: Section Selection (via OKF Bundle Agent) ───────
             logger.info(
                 "[%s] Calling OKF Bundle Agent for section selection", self.name)
-            state.section_type = okf_client.select_section(state.user_query)
+            state.section_type, state.domain = okf_client.select_section(
+                state.user_query)
 
             # ── Step 2: Section Retrieval (via OKF Bundle Agent) ───────
             logger.info(
                 "[%s] Calling OKF Bundle Agent for section retrieval", self.name)
-            state.okf_content = okf_client.retrieve_section(state.section_type)
+            state.okf_content = okf_client.retrieve_section(
+                state.section_type, state.domain)
 
             # ── Step 3: Context Building (via OKF Bundle Agent) ────────
             logger.info(
                 "[%s] Calling OKF Bundle Agent for context building", self.name)
             state.system_context = okf_client.build_context(
                 state.user_query,
-                state.okf_content
+                state.okf_content,
+                state.domain
             )
 
             # ── Branch A: Runbooks / Datasets → Knowledge Base ────────────

@@ -107,17 +107,19 @@ def stream_pipeline(
 
         try:
             yield _sse({"event": "agent_start", "agent": "SectionSelectionAgent"})
-            state.section_type = okf_client.select_section(state.user_query)
+            state.section_type, state.domain = okf_client.select_section(
+                state.user_query)
             yield _sse({"event": "agent_done", "agent": "SectionSelectionAgent",
-                        "section_type": state.section_type})
+                        "section_type": state.section_type, "domain": state.domain})
 
             yield _sse({"event": "agent_start", "agent": "SectionRetrievalAgent"})
-            state.okf_content = okf_client.retrieve_section(state.section_type)
+            state.okf_content = okf_client.retrieve_section(
+                state.section_type, state.domain)
             yield _sse({"event": "agent_done", "agent": "SectionRetrievalAgent"})
 
             yield _sse({"event": "agent_start", "agent": "ContextBuilderAgent"})
             state.system_context = okf_client.build_context(
-                state.user_query, state.okf_content)
+                state.user_query, state.okf_content, state.domain)
             yield _sse({"event": "agent_done", "agent": "ContextBuilderAgent"})
         except Exception as exc:
             logger.error("=== OKF Bundle Agent error: %s", exc)

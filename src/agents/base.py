@@ -37,6 +37,7 @@ class AgentState:
     conversation_history: list = field(default_factory=list)
     intent: str = ""               # "domain" | "general"
     section_type: str = ""         # "Tables" | "Metrics" | "Runbooks" | "Datasets"
+    domain: str = ""               # "retail_banking" | "customer_support"; "" = all domains
     # raw OKF markdown (SectionRetrievalAgent output)
     okf_content: str = ""
     # structured prompt (ContextBuilderAgent output)

@@ -34,15 +34,18 @@ class OKFBundleClient:
         logger.info(
             "OKFBundleClient initialized: base_url=%s, timeout=%d", self.base_url, timeout)
 
-    def select_section(self, query: str) -> str:
+    def select_section(self, query: str) -> tuple[str, str]:
         """
-        Classify query into OKF section.
+        Classify query into OKF section and domain.
 
         Args:
             query: User query
 
         Returns:
-            Section type: "Tables", "Metrics", "Runbooks", or "Datasets"
+            (section, domain) tuple. section is one of "Tables", "Metrics",
+            "Runbooks", "Datasets". domain is "retail_banking",
+            "customer_support", or "" if the query is not confidently
+            scoped to a single domain.
 
         Raises:
             httpx.HTTPStatusError: If request fails
@@ -53,16 +56,21 @@ class OKFBundleClient:
             json={"query": query}
         )
         response.raise_for_status()
-        section = response.json()["section"]
-        logger.info("Section selected: %s", section)
-        return section
+        data = response.json()
+        section = data["section"]
+        domain = data.get("domain") or ""
+        logger.info("Section selected: %s (domain=%s)",
+                    section, domain or "all")
+        return section, domain
 
-    def retrieve_section(self, section_type: str) -> str:
+    def retrieve_section(self, section_type: str, domain: str = "") -> str:
         """
         Retrieve OKF content for section.
 
         Args:
             section_type: Section type (Tables, Metrics, Runbooks, Datasets)
+            domain: Optional domain filter ("retail_banking" | "customer_support").
+                    Empty string returns content from all domains.
 
         Returns:
             Markdown content from all concepts in section
@@ -70,23 +78,26 @@ class OKFBundleClient:
         Raises:
             httpx.HTTPStatusError: If request fails
         """
-        logger.debug("Retrieving section: %s", section_type)
+        logger.debug("Retrieving section: %s (domain=%s)",
+                     section_type, domain or "all")
         response = self.client.post(
             "/section-retrieval",
-            json={"section_type": section_type}
+            json={"section_type": section_type, "domain": domain or None}
         )
         response.raise_for_status()
         content = response.json()["content"]
         logger.info("Section retrieved: %d chars", len(content))
         return content
 
-    def build_context(self, query: str, okf_content: str) -> str:
+    def build_context(self, query: str, okf_content: str, domain: str = "") -> str:
         """
         Build structured context from OKF content.
 
         Args:
             query: User query
             okf_content: Raw OKF markdown
+            domain: Optional domain ("retail_banking" | "customer_support") so
+                    the SQL generator knows whether to schema-qualify tables.
 
         Returns:
             Structured system prompt
@@ -99,7 +110,8 @@ class OKFBundleClient:
             "/context-building",
             json={
                 "query": query,
-                "okf_content": okf_content
+                "okf_content": okf_content,
+                "domain": domain or None
             }
         )
         response.raise_for_status()
