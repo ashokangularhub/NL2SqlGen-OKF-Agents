@@ -48,8 +48,12 @@ from agents import (  # noqa: E402
     run_pipeline,
     stream_pipeline,
     _VALIDATION_FAILED,
+    MAX_SQL_RETRIES,
+    SQLGeneratorAgent,
+    SQLValidatorAgent,
 )
 from conversation_history import ConversationHistory  # noqa: E402
+from okf_client import get_okf_client  # noqa: E402
 
 # ── Logging ───────────────────────────────────────────────────────────────────
 
@@ -170,6 +174,29 @@ class HistoryResponse(BaseModel):
     turns: list[HistoryEntry]
 
 
+class GenerateSQLRequest(BaseModel):
+    query: str = Field(..., min_length=1, max_length=2000,
+                       description="Natural-language intent to translate into SQL")
+    domain_hint: str | None = Field(
+        None,
+        description=(
+            "Optional domain override passed straight to the OKF Bundle Agent "
+            "(e.g. 'customer_support', 'retail_banking'). If omitted, the OKF "
+            "Bundle Agent infers the domain from the query."
+        ),
+    )
+
+
+class GenerateSQLResponse(BaseModel):
+    success: bool
+    sql: str | None = None
+    section_type: str = ""
+    domain: str = ""
+    attempts: int = 0
+    validator_feedback: str | None = None
+    error: str | None = None
+
+
 # ── Helper: extract query string from any request format ─────────────────────
 
 
@@ -243,6 +270,68 @@ async def health() -> dict:
         status_info["status"], status_info["llm_mode"]
     )
     return status_info
+
+
+@app.post("/generate-sql", response_model=GenerateSQLResponse, tags=["Agents"])
+async def generate_sql(payload: GenerateSQLRequest) -> GenerateSQLResponse:
+    """
+    Schema-aware SQL generation only — does NOT execute the query.
+
+    Reuses the OKF Bundle Agent (section-selection / section-retrieval /
+    context-building) plus the SQLGeneratorAgent <-> SQLValidatorAgent retry
+    loop (capped at MAX_SQL_RETRIES), then returns the generated SQL without
+    invoking SQLExecutorAgent. Intended for callers — e.g. the
+    Product-Management-Agent in customer-support-rag-agent — that generate
+    SQL here but execute it against their own tool
+    (customer-support-mcp-tools' POST /sql-tool).
+    """
+    okf_client = get_okf_client()
+    state = AgentState(user_query=payload.query)
+    logger.info("[API /generate-sql] query=%.80s domain_hint=%s",
+                payload.query, payload.domain_hint or "none")
+    try:
+        state.section_type, state.domain = okf_client.select_section(
+            payload.query)
+        if payload.domain_hint:
+            state.domain = payload.domain_hint
+        state.okf_content = okf_client.retrieve_section(
+            state.section_type, state.domain)
+        state.system_context = okf_client.build_context(
+            payload.query, state.okf_content, state.domain)
+
+        while state.sql_attempt < MAX_SQL_RETRIES:
+            state.sql_attempt += 1
+            state = SQLGeneratorAgent().run(state)
+            state = SQLValidatorAgent().run(state)
+
+            if state.error == _VALIDATION_FAILED:
+                if state.sql_attempt >= MAX_SQL_RETRIES:
+                    return GenerateSQLResponse(
+                        success=False,
+                        section_type=state.section_type,
+                        domain=state.domain,
+                        attempts=state.sql_attempt,
+                        validator_feedback=state.validator_feedback,
+                        error=(
+                            f"Could not generate a valid SQL query after "
+                            f"{MAX_SQL_RETRIES} attempts. "
+                            f"Last feedback: {state.validator_feedback}"
+                        ),
+                    )
+                state.error = ""
+                continue
+
+            return GenerateSQLResponse(
+                success=True,
+                sql=state.generated_sql,
+                section_type=state.section_type,
+                domain=state.domain,
+                attempts=state.sql_attempt,
+                validator_feedback=state.validator_feedback or None,
+            )
+    except Exception as exc:
+        logger.error("[API /generate-sql] error: %s", exc)
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
 @app.post("/classify", response_model=PipelineResponse, tags=["Agents"])
