@@ -119,7 +119,12 @@ class SQLGeneratorAgent(BaseAgent):
         "If validator feedback says a column is ambiguous or doesn't exist:\n"
         "  1. Check the schema for all tables involved in JOINs\n"
         "  2. Rewrite using fully qualified names: table_name.column_name\n"
-        "  3. Do NOT try the same unqualified column again"
+        "  3. Do NOT try the same unqualified column again\n"
+        "  4. IGNORE any feedback asking for a 3-part 'schema.table_name.column_name'\n"
+        "     qualifier (e.g. 'customer_support.orders.order_id') — that form is INVALID\n"
+        "     for this pipeline. Keep bare 'table_name.column_name' (e.g. 'orders.order_id')\n"
+        "     even if feedback claims otherwise; only the FROM/JOIN target itself carries\n"
+        "     the schema prefix."
     )
 
     def run(self, state: AgentState) -> AgentState:
